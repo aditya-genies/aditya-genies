@@ -25,6 +25,7 @@ from xml.sax.saxutils import escape
 from zoneinfo import ZoneInfo
 
 LOGIN = "aditya-genies"
+ORG = "geniesinc"  # The top repos card shows only this owner's repos.
 TZ = ZoneInfo("America/Los_Angeles")
 API = "https://api.github.com"
 OUT = Path(__file__).resolve().parent.parent / "assets"
@@ -481,7 +482,7 @@ def repos_card(
     theme: dict, by_repo: dict[str, Counter], recent: Counter, languages: dict[str, dict | None]
 ) -> str:
     kinds = (("commit", "Commits"), ("pr", "PRs opened"), ("review", "Reviews"))
-    ranked = sorted(by_repo.items(), key=lambda kv: (-sum(kv[1].values()), kv[0]))[:8]
+    ranked = sorted(by_repo.items(), key=lambda kv: (-sum(kv[1].values()), kv[0]))[:7]
     grand = sum(sum(c.values()) for c in by_repo.values()) or 1
     peak = max((sum(c.values()) for _, c in ranked), default=1)
     bar_x, bar_w, top, row_h = 300, 360, 104, 42
@@ -526,7 +527,7 @@ def repos_card(
         )
     height = top + len(ranked) * row_h + 12
     body = "".join(legend) + heads + "".join(rows)
-    return card(theme, height, "Where the work goes", f"Top repos · {len(by_repo)} repos in the {PERIOD_LABEL}", body)
+    return card(theme, height, "Where the work goes", f"Top {ORG} repos · {len(by_repo)} repos in the {PERIOD_LABEL}", body)
 
 
 def rhythm_card(theme: dict, punch: Counter, weekend_active: int, weekend_days: int) -> str:
@@ -587,7 +588,8 @@ def main() -> None:
 
     by_repo: dict[str, Counter] = defaultdict(Counter)
     for e in period:
-        by_repo[e.repo][e.kind] += 1
+        if e.repo.startswith(f"{ORG}/"):
+            by_repo[e.repo][e.kind] += 1
     recent = Counter(e.repo for e in events if e.at >= midnight(TODAY - timedelta(days=29)))
     punch = Counter((e.at.weekday(), e.at.hour) for e in period)
     period_days = (PERIOD_START + timedelta(days=d) for d in range(PERIOD_DAYS))
