@@ -23,10 +23,10 @@ text { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helv
 <text x="28" y="98" font-size="15" class="m">AI Backend Engineer at Genies</text>
 </g>
 <g class="in" style="animation-delay:.2s">
-<text x="812" y="52" font-size="28" font-weight="700" text-anchor="end" class="n">1,798</text>
+<text x="812" y="52" font-size="28" font-weight="700" text-anchor="end" class="n">1,801</text>
 <text x="812" y="72" font-size="12" class="m" text-anchor="end">contributions in the last 4 months</text>
-<polygon points="612,116 612.0,103.4 623.8,106.4 635.5,109.4 647.3,104.4 659.1,107.1 670.8,109.6 682.6,108.1 694.4,111.1 706.1,106.3 717.9,111.9 729.6,100.7 741.4,108.4 753.2,108.5 764.9,104.9 776.7,95.1 788.5,84.0 800.2,91.9 812.0,95.4 812,116" fill="url(#fade)"/>
-<polyline points="612.0,103.4 623.8,106.4 635.5,109.4 647.3,104.4 659.1,107.1 670.8,109.6 682.6,108.1 694.4,111.1 706.1,106.3 717.9,111.9 729.6,100.7 741.4,108.4 753.2,108.5 764.9,104.9 776.7,95.1 788.5,84.0 800.2,91.9 812.0,95.4" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="812.0" cy="95.4" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/>
+<polygon points="612,116 612.0,103.4 623.8,106.4 635.5,109.4 647.3,104.4 659.1,107.1 670.8,109.6 682.6,108.1 694.4,111.1 706.1,106.3 717.9,111.9 729.6,100.7 741.4,108.4 753.2,108.5 764.9,104.9 776.7,95.1 788.5,84.0 800.2,91.9 812.0,95.1 812,116" fill="url(#fade)"/>
+<polyline points="612.0,103.4 623.8,106.4 635.5,109.4 647.3,104.4 659.1,107.1 670.8,109.6 682.6,108.1 694.4,111.1 706.1,106.3 717.9,111.9 729.6,100.7 741.4,108.4 753.2,108.5 764.9,104.9 776.7,95.1 788.5,84.0 800.2,91.9 812.0,95.1" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="812.0" cy="95.1" r="4" fill="#3987e5" stroke="#0d1117" stroke-width="2"/>
 </g>
 </svg>
