@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from calendar import monthrange
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -31,11 +32,29 @@ SEARCH_CAP = 1000  # GitHub search returns at most 1000 results for one query.
 
 TOKEN = os.environ.get("GH_TOKEN") or sys.exit("GH_TOKEN is not set. Add the STATS_TOKEN secret to the repo.")
 
+PERIOD_MONTHS = 4
+PERIOD_LABEL = f"last {PERIOD_MONTHS} months"
+
+
+def midnight(day: date) -> datetime:
+    return datetime.combine(day, datetime.min.time(), TZ)
+
+
+def months_before(day: date, months: int) -> date:
+    year, month = divmod(day.year * 12 + day.month - 1 - months, 12)
+    return day.replace(year=year, month=month + 1, day=min(day.day, monthrange(year, month + 1)[1]))
+
+
 NOW = datetime.now(TZ)
 TODAY = NOW.date()
-# 53 heatmap columns that start on a Sunday, like the GitHub graph.
-HEAT_START = TODAY - timedelta(days=(TODAY.weekday() + 1) % 7 + 52 * 7)
-START = datetime.combine(HEAT_START, datetime.min.time(), TZ)
+# The main period: the last 4 months, in whole days, today included.
+PERIOD_START = months_before(TODAY, PERIOD_MONTHS) + timedelta(days=1)
+PERIOD_DAYS = (TODAY - PERIOD_START).days + 1
+# Heatmap columns start on a Sunday, like the GitHub graph.
+HEAT_START = PERIOD_START - timedelta(days=(PERIOD_START.weekday() + 1) % 7)
+# Fetch one more period before the main period, for the comparison.
+START = midnight(PERIOD_START - timedelta(days=PERIOD_DAYS))
+END = midnight(TODAY + timedelta(days=1))
 
 
 # --- GitHub API ---------------------------------------------------------------------------
@@ -222,9 +241,11 @@ def collect() -> tuple[list[Event], list[Merge], dict[str, dict | None]]:
     return events, merges, languages
 
 
-def window_stats(events: list[Event], merges: list[Merge], start: datetime, end: datetime) -> dict[str, int]:
-    inside = [e for e in events if start < e.at <= end]
-    merged = [m for m in merges if start < m.at <= end]
+def window_stats(events: list[Event], merges: list[Merge], first: date, days: int) -> dict[str, int]:
+    """Count the activity in `days` whole days that start on `first`."""
+    start, end = midnight(first), midnight(first + timedelta(days=days))
+    inside = [e for e in events if start <= e.at < end]
+    merged = [m for m in merges if start <= m.at < end]
     return {
         "commits": sum(e.kind == "commit" for e in inside),
         "opened": sum(e.kind == "pr" for e in inside),
@@ -352,7 +373,7 @@ def header_card(theme: dict, total: int, weekly: list[int]) -> str:
 <g class="in" style="animation-delay:.15s">{''.join(chips)}</g>
 <g class="in" style="animation-delay:.3s">
 <text x="{W - 28}" y="66" font-size="32" font-weight="700" text-anchor="end" class="n">{fmt(total)}</text>
-<text x="{W - 28}" y="86" font-size="12" class="m" text-anchor="end">contributions in the last 12 months</text>
+<text x="{W - 28}" y="86" font-size="12" class="m" text-anchor="end">contributions in the {PERIOD_LABEL}</text>
 <polygon points="{area}" fill="url(#fade)"/>
 <polyline points="{line}" fill="none" stroke="{blue}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="4" fill="{blue}" stroke="{theme['card']}" stroke-width="2"/>
@@ -372,7 +393,7 @@ def delta(current: int, previous: int) -> str:
     return '<tspan class="m">— 0%</tspan>'
 
 
-def pulse_card(theme: dict, windows: list[tuple[str, int, dict, dict | None]]) -> str:
+def pulse_card(theme: dict, windows: list[tuple[str, int, dict, dict]]) -> str:
     rows = [
         ("Commits", "commits"),
         ("PRs opened", "opened"),
@@ -402,68 +423,69 @@ def pulse_card(theme: dict, windows: list[tuple[str, int, dict, dict | None]]) -
                 value = (
                     f'<tspan>+{compact(cur["added"])}</tspan><tspan class="m"> / −{compact(cur["deleted"])}</tspan>'
                 )
-                change = (cur["added"] + cur["deleted"], prev["added"] + prev["deleted"]) if prev else None
+                change = (cur["added"] + cur["deleted"], prev["added"] + prev["deleted"])
             elif key == "days":
                 value = f'{cur["days"]}<tspan class="m" font-size="12" font-weight="400"> / {days}</tspan>'
-                change = (cur["days"], prev["days"]) if prev else None
+                change = (cur["days"], prev["days"])
             else:
                 value = fmt(cur[key])
-                change = (cur[key], prev[key]) if prev else None
+                change = (cur[key], prev[key])
             cells.append(f'<text x="{x + 14}" y="{y}" font-size="15" font-weight="600" class="n">{value}</text>')
-            if change:
-                cells.append(
-                    f'<text x="{x + col_w - 14}" y="{y}" font-size="11" text-anchor="end" class="n">{delta(*change)}</text>'
-                )
+            cells.append(
+                f'<text x="{x + col_w - 14}" y="{y}" font-size="11" text-anchor="end" class="n">{delta(*change)}</text>'
+            )
         parts.append(f'<g class="in" style="animation-delay:{0.1 * c:.1f}s">{"".join(cells)}</g>')
     subtitle = f"vs. the previous period · updated {NOW:%b %-d, %Y}"
     return card(theme, height, "Pulse", subtitle, "".join(parts))
 
 
-def heatmap_card(theme: dict, daily: Counter, year: Counter, current: int, longest: int) -> str:
-    """Draw 53 weeks of `daily`. The totals use `year`, the last 365 days, like the other cards."""
-    total = sum(year.values())
-    best_day, best = max(year.items(), key=lambda kv: kv[1], default=(TODAY, 0))
+def heatmap_card(theme: dict, daily: Counter, current: int, longest: int) -> str:
+    """Draw the period as a weekly grid, with the streak stats on the right."""
+    total = sum(daily.values())
+    best_day, best = max(daily.items(), key=lambda kv: kv[1], default=(TODAY, 0))
+    nonzero = sorted(daily.values())
+    cuts = [nonzero[int(len(nonzero) * q)] for q in (0.25, 0.5, 0.75)] if nonzero else [0, 0, 0]
+    x0, y0, cell, step = 58, 84, 20, 24
+    weeks = (TODAY - HEAT_START).days // 7 + 1
+    cells, months = [], []
+    for col in range(weeks):
+        for row in range(7):
+            day = HEAT_START + timedelta(weeks=col, days=row)
+            if day < PERIOD_START or day > TODAY:
+                continue
+            count = daily.get(day, 0)
+            level = 0 if not count else 1 + sum(count > cut for cut in cuts)
+            cells.append(
+                f'<rect x="{x0 + col * step}" y="{y0 + row * step}" width="{cell}" height="{cell}" rx="4" fill="{theme["heat"][level]}"/>'
+            )
+            if day.day == 1:
+                months.append(f'<text x="{x0 + col * step}" y="{y0 - 10}" font-size="11" class="m">{day:%b}</text>')
+    days = "".join(
+        f'<text x="24" y="{y0 + row * step + 14}" font-size="10" class="m">{name}</text>'
+        for row, name in ((1, "Mon"), (3, "Wed"), (5, "Fri"))
+    )
+    ly = y0 + 7 * step + 12
+    legend = [f'<text x="{x0}" y="{ly + 9}" font-size="10" class="m">Less</text>']
+    legend += [
+        f'<rect x="{x0 + 30 + i * 14}" y="{ly}" width="11" height="11" rx="2.5" fill="{color}"/>'
+        for i, color in enumerate(theme["heat"])
+    ]
+    legend.append(f'<text x="{x0 + 30 + 5 * 14 + 4}" y="{ly + 9}" font-size="10" class="m">More</text>')
+    note = f'<text x="{W - 24}" y="{ly + 9}" font-size="10" class="m" text-anchor="end">Commits, PRs opened, and reviews · Pacific time</text>'
+
+    side_x = x0 + weeks * step + 48
     stats = [
         (f"{current} days", "current streak"),
         (f"{longest} days", "longest streak"),
         (fmt(best), f"best day · {best_day:%b %-d}"),
-        (f"{len(year)}", "active days"),
+        (f"{len(daily)} / {PERIOD_DAYS}", "active days"),
     ]
-    parts = [stat(24 + i * 200, 76, value, label, 0.08 * i) for i, (value, label) in enumerate(stats)]
-
-    nonzero = sorted(v for v in daily.values() if v)
-    cuts = [nonzero[int(len(nonzero) * q)] for q in (0.25, 0.5, 0.75)] if nonzero else [0, 0, 0]
-    x0, y0, cell, step = 54, 136, 11, 14
-    cells, months = [], []
-    last_month_col = -9
-    for col in range(53):
-        week_start = HEAT_START + timedelta(weeks=col)
-        for row in range(7):
-            day = week_start + timedelta(days=row)
-            if day > TODAY:
-                break
-            count = daily.get(day, 0)
-            level = 0 if not count else 1 + sum(count > cut for cut in cuts)
-            cells.append(
-                f'<rect x="{x0 + col * step}" y="{y0 + row * step}" width="{cell}" height="{cell}" rx="2.5" fill="{theme["heat"][level]}"/>'
-            )
-            if day.day == 1 and col - last_month_col >= 3:
-                months.append(f'<text x="{x0 + col * step}" y="{y0 - 8}" font-size="10" class="m">{day:%b}</text>')
-                last_month_col = col
-    days = "".join(
-        f'<text x="24" y="{y0 + row * step + 9}" font-size="10" class="m">{name}</text>'
-        for row, name in ((1, "Mon"), (3, "Wed"), (5, "Fri"))
-    )
-    ly = y0 + 7 * step + 12
-    legend = [f'<text x="{W - 152}" y="{ly + 9}" font-size="10" class="m" text-anchor="end">Less</text>']
-    legend += [
-        f'<rect x="{W - 146 + i * step}" y="{ly}" width="{cell}" height="{cell}" rx="2.5" fill="{color}"/>'
-        for i, color in enumerate(theme["heat"])
+    parts = [
+        stat(side_x + (i % 2) * 150, y0 + 24 + (i // 2) * 84, value, label, 0.08 * i)
+        for i, (value, label) in enumerate(stats)
     ]
-    legend.append(f'<text x="{W - 72}" y="{ly + 9}" font-size="10" class="m">More</text>')
-    note = '<text x="24" y="{}" font-size="10" class="m">Commits, PRs opened, and reviews · Pacific time</text>'.format(ly + 9)
-    body = "".join(parts) + f'<g class="in" style="animation-delay:.3s">{"".join(months)}{days}{"".join(cells)}{"".join(legend)}{note}</g>'
-    return card(theme, ly + 32, "Activity", f"{fmt(total)} contributions in the last 12 months", body)
+    grid = f'<g class="in">{"".join(months)}{days}{"".join(cells)}{"".join(legend)}{note}</g>'
+    return card(theme, ly + 32, "Activity", f"{fmt(total)} contributions in the {PERIOD_LABEL}", grid + "".join(parts))
 
 
 def repos_card(
@@ -482,7 +504,7 @@ def repos_card(
         lx += 16 + 7 * len(label) + 18
     heads = "".join(
         f'<text x="{x}" y="{top - 12}" font-size="10" font-weight="600" letter-spacing=".6" class="m" text-anchor="end">{h}</text>'
-        for x, h in ((W - 112, "12 MO"), (W - 66, "SHARE"), (W - 24, "30 D"))
+        for x, h in ((W - 112, f"{PERIOD_MONTHS} MO"), (W - 66, "SHARE"), (W - 24, "30 D"))
     )
     rows = []
     for i, (repo, counts) in enumerate(ranked):
@@ -515,7 +537,7 @@ def repos_card(
         )
     height = top + len(ranked) * row_h + 12
     body = "".join(legend) + heads + "".join(rows)
-    return card(theme, height, "Where the work goes", f"Top repos · {len(by_repo)} repos in the last 12 months", body)
+    return card(theme, height, "Where the work goes", f"Top repos · {len(by_repo)} repos in the {PERIOD_LABEL}", body)
 
 
 def rhythm_card(theme: dict, punch: Counter) -> str:
@@ -554,7 +576,7 @@ def rhythm_card(theme: dict, punch: Counter) -> str:
         stat(side_x, 204, f"{weekend:.0f}%", "on weekends", 0.36),
     ]
     body = f'<g class="in">{"".join(dots)}{hours}</g>' + "".join(side)
-    return card(theme, y0 + 7 * row + 20, "When I ship", "By weekday and hour · Pacific time · last 12 months", body)
+    return card(theme, y0 + 7 * row + 20, "When I ship", f"By weekday and hour · Pacific time · {PERIOD_LABEL}", body)
 
 
 # --- Main ---------------------------------------------------------------------------------
@@ -564,32 +586,30 @@ def main() -> None:
     events, merges, languages = collect()
 
     windows = []
-    for name, days in (("Last 7 days", 7), ("Last 30 days", 30), ("Last 12 months", 365)):
-        span = timedelta(days=days)
-        current = window_stats(events, merges, NOW - span, NOW)
-        # The data starts about one year back, so only the short windows get a comparison.
-        previous = window_stats(events, merges, NOW - 2 * span, NOW - span) if days < 365 else None
+    for name, days in (("Last 7 days", 7), ("Last 30 days", 30), (PERIOD_LABEL.capitalize(), PERIOD_DAYS)):
+        first = TODAY - timedelta(days=days - 1)
+        current = window_stats(events, merges, first, days)
+        previous = window_stats(events, merges, first - timedelta(days=days), days)
         windows.append((name, days, current, previous))
 
-    daily = Counter(e.at.date() for e in events)
+    period = [e for e in events if e.at >= midnight(PERIOD_START)]
+    daily = Counter(e.at.date() for e in period)
     current_streak, longest_streak = streaks(set(daily))
-    week_starts = [TODAY - timedelta(days=(TODAY.weekday() + 1) % 7 + 7 * w) for w in range(25, -1, -1)]
-    weekly = [sum(daily.get(start + timedelta(days=d), 0) for d in range(7)) for start in week_starts]
+    weeks = (TODAY - HEAT_START).days // 7 + 1
+    weekly = [sum(daily.get(HEAT_START + timedelta(weeks=w, days=d), 0) for d in range(7)) for w in range(weeks)]
 
-    year_start = NOW - timedelta(days=365)
-    last_year = [e for e in events if e.at > year_start]
     by_repo: dict[str, Counter] = defaultdict(Counter)
-    for e in last_year:
+    for e in period:
         by_repo[e.repo][e.kind] += 1
-    recent = Counter(e.repo for e in events if e.at > NOW - timedelta(days=30))
-    punch = Counter((e.at.weekday(), e.at.hour) for e in last_year)
+    recent = Counter(e.repo for e in events if e.at >= midnight(TODAY - timedelta(days=29)))
+    punch = Counter((e.at.weekday(), e.at.hour) for e in period)
 
     OUT.mkdir(exist_ok=True)
     for mode, theme in THEMES.items():
         cards = {
-            "header": header_card(theme, len(last_year), weekly),
+            "header": header_card(theme, len(period), weekly),
             "pulse": pulse_card(theme, windows),
-            "activity": heatmap_card(theme, daily, Counter(e.at.date() for e in last_year), current_streak, longest_streak),
+            "activity": heatmap_card(theme, daily, current_streak, longest_streak),
             "repos": repos_card(theme, by_repo, recent, languages),
             "rhythm": rhythm_card(theme, punch),
         }
