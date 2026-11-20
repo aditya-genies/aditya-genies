@@ -22,5 +22,3 @@
   <source media="(prefers-color-scheme: dark)" srcset="assets/rhythm-dark.svg">
   <img alt="Activity by weekday and hour" src="assets/rhythm-light.svg" width="100%">
 </picture>
-
-<sub>A GitHub Action makes these cards again every day. The counts include private work repositories. "Lines shipped" counts the lines in merged pull requests.</sub>

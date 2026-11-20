@@ -341,17 +341,8 @@ def stat(x: float, y: float, value: str, label: str, delay: float = 0) -> str:
 
 def header_card(theme: dict, total: int, weekly: list[int]) -> str:
     blue, _, aqua = theme["series"]
-    chips, x = [], 28
-    for name in ("TypeScript", "Python", "Go", "Convex", "Terraform", "Kubernetes"):
-        width = 7 * len(name) + 22
-        chips.append(
-            f'<rect x="{x}" y="128" width="{width}" height="24" rx="12" fill="{theme["panel"]}" stroke="{theme["border"]}"/>'
-            f'<text x="{x + width / 2}" y="144" font-size="12" text-anchor="middle">{name}</text>'
-        )
-        x += width + 8
-
     # Sparkline of weekly contributions, right side.
-    sx, sy, sw, sh = W - 228, 104, 200, 44
+    sx, sy, sw, sh = W - 228, 84, 200, 32
     peak = max(weekly) or 1
     step = sw / (len(weekly) - 1)
     points = [(sx + i * step, sy + sh - sh * v / peak) for i, v in enumerate(weekly)]
@@ -366,20 +357,18 @@ def header_card(theme: dict, total: int, weekly: list[int]) -> str:
 </defs>
 <rect x="0" y="0" width="{W}" height="4" fill="url(#accent)" clip-path="url(#top)"/>
 <g class="in">
-<text x="28" y="66" font-size="32" font-weight="700" letter-spacing="-.5">Aditya Mantri</text>
-<text x="28" y="92" font-size="15" class="m">AI Backend Engineer at Genies</text>
-<text x="28" y="114" font-size="13">LLM services, MCP servers, and the cloud infra under them.</text>
+<text x="28" y="70" font-size="32" font-weight="700" letter-spacing="-.5">Aditya Mantri</text>
+<text x="28" y="98" font-size="15" class="m">AI Backend Engineer at Genies</text>
 </g>
-<g class="in" style="animation-delay:.15s">{''.join(chips)}</g>
-<g class="in" style="animation-delay:.3s">
-<text x="{W - 28}" y="66" font-size="32" font-weight="700" text-anchor="end" class="n">{fmt(total)}</text>
-<text x="{W - 28}" y="86" font-size="12" class="m" text-anchor="end">contributions in the {PERIOD_LABEL}</text>
+<g class="in" style="animation-delay:.2s">
+<text x="{W - 28}" y="52" font-size="28" font-weight="700" text-anchor="end" class="n">{fmt(total)}</text>
+<text x="{W - 28}" y="72" font-size="12" class="m" text-anchor="end">contributions in the {PERIOD_LABEL}</text>
 <polygon points="{area}" fill="url(#fade)"/>
 <polyline points="{line}" fill="none" stroke="{blue}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
 <circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="4" fill="{blue}" stroke="{theme['card']}" stroke-width="2"/>
 </g>"""
     # The base card draws a title row; the header uses its own layout, so drop the empty title.
-    return card(theme, 176, "", "", body)
+    return card(theme, 136, "", "", body)
 
 
 def delta(current: int, previous: int) -> str:
@@ -540,7 +529,7 @@ def repos_card(
     return card(theme, height, "Where the work goes", f"Top repos · {len(by_repo)} repos in the {PERIOD_LABEL}", body)
 
 
-def rhythm_card(theme: dict, punch: Counter) -> str:
+def rhythm_card(theme: dict, punch: Counter, weekend_active: int, weekend_days: int) -> str:
     blue = theme["series"][0]
     peak = max(punch.values(), default=1)
     x0, y0, col, row = 70, 78, 24, 26
@@ -565,15 +554,13 @@ def rhythm_card(theme: dict, punch: Counter) -> str:
     for (wd, hour), count in punch.items():
         by_day[wd] += count
         by_hour[hour] += count
-    total = sum(by_day.values()) or 1
     busiest = max(range(7), key=lambda d: by_day[d])
     peak_hour = max(range(24), key=lambda h: by_hour[h])
-    weekend = 100 * (by_day[5] + by_day[6]) / total
     side_x = x0 + 24 * col + 24
     side = [
         stat(side_x, 92, ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[busiest], "busiest day", 0.2),
         stat(side_x, 148, hour_label(peak_hour), "peak hour", 0.28),
-        stat(side_x, 204, f"{weekend:.0f}%", "on weekends", 0.36),
+        stat(side_x, 204, f"{weekend_active} / {weekend_days}", "weekend days active", 0.36),
     ]
     body = f'<g class="in">{"".join(dots)}{hours}</g>' + "".join(side)
     return card(theme, y0 + 7 * row + 20, "When I ship", f"By weekday and hour · Pacific time · {PERIOD_LABEL}", body)
@@ -603,6 +590,8 @@ def main() -> None:
         by_repo[e.repo][e.kind] += 1
     recent = Counter(e.repo for e in events if e.at >= midnight(TODAY - timedelta(days=29)))
     punch = Counter((e.at.weekday(), e.at.hour) for e in period)
+    period_days = (PERIOD_START + timedelta(days=d) for d in range(PERIOD_DAYS))
+    weekend = [day for day in period_days if day.weekday() >= 5]
 
     OUT.mkdir(exist_ok=True)
     for mode, theme in THEMES.items():
@@ -611,7 +600,7 @@ def main() -> None:
             "pulse": pulse_card(theme, windows),
             "activity": heatmap_card(theme, daily, current_streak, longest_streak),
             "repos": repos_card(theme, by_repo, recent, languages),
-            "rhythm": rhythm_card(theme, punch),
+            "rhythm": rhythm_card(theme, punch, sum(day in daily for day in weekend), len(weekend)),
         }
         for name, svg in cards.items():
             (OUT / f"{name}-{mode}.svg").write_text(svg)
