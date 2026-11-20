@@ -1,0 +1,40 @@
+name: Profile stats
+
+on:
+  schedule:
+    - cron: "17 13 * * *" # Every day, about 5–6 AM Pacific.
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [scripts/**, .github/workflows/stats.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: profile-stats
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Make the cards
+        run: python scripts/generate_stats.py
+        env:
+          # A token for aditya-genies that can read the private geniesinc repos.
+          GH_TOKEN: ${{ secrets.STATS_TOKEN }}
+      - name: Commit the cards
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore: refresh profile stats"
+          git pull --rebase
+          git push
