@@ -5,12 +5,12 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/pulse-dark.svg">
-  <img alt="Commits, PRs, reviews, and lines shipped in the last 7 days, 30 days, and 12 months" src="assets/pulse-light.svg" width="100%">
+  <img alt="Commits, PRs, reviews, and lines shipped in the last 7 days, 30 days, and 4 months" src="assets/pulse-light.svg" width="100%">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/activity-dark.svg">
-  <img alt="Daily activity for the last year, with streaks" src="assets/activity-light.svg" width="100%">
+  <img alt="Daily activity for the last 4 months, with streaks" src="assets/activity-light.svg" width="100%">
 </picture>
 
 <picture>
