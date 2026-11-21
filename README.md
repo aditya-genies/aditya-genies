@@ -1,3 +1,5 @@
+<p align="right"><a href="https://github.com/settings/appearance"><sub>🌗 Switch light / dark</sub></a></p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/header-dark.svg">
   <img alt="Aditya Mantri, AI Backend Engineer at Genies" src="assets/header-light.svg" width="100%">
