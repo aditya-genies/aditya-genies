@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
 import sys
 import time
 import urllib.error
@@ -133,7 +134,14 @@ def commit_fetcher(start: datetime, end: datetime, token: PageToken) -> tuple[in
     page = int(token or 1)
     query = f"author:{LOGIN} author-date:{date_range(start, end)}"
     params = urllib.parse.urlencode({"q": query, "per_page": 100, "page": page})
-    data = request(f"{API}/search/commits?{params}")
+    # Search can time out on GitHub's side and return part of the results. Retry, then stop the run.
+    for attempt in range(4):
+        data = request(f"{API}/search/commits?{params}")
+        if not data["incomplete_results"]:
+            break
+        time.sleep(10 * (attempt + 1))
+    else:
+        raise RuntimeError(f"Commit search stayed incomplete for {query}")
     has_more = data["items"] and page * 100 < min(data["total_count"], SEARCH_CAP)
     return data["total_count"], data["items"], page + 1 if has_more else None
 
@@ -322,7 +330,13 @@ text {{ font-family: {FONT}; fill: {theme['text']}; }}
 .n {{ font-variant-numeric: tabular-nums; }}
 .in {{ animation: in .7s ease-out both; }}
 @keyframes in {{ from {{ opacity: 0; }} }}
-@media (prefers-reduced-motion: reduce) {{ .in {{ animation: none; }} }}
+.grow {{ transform-box: fill-box; transform-origin: left center; animation: grow .9s cubic-bezier(.2,.7,.2,1) both; }}
+@keyframes grow {{ from {{ transform: scaleX(0); }} }}
+.pop {{ transform-box: fill-box; transform-origin: center; animation: pop .5s cubic-bezier(.2,.7,.2,1) both; }}
+@keyframes pop {{ from {{ opacity: 0; transform: scale(0); }} }}
+.draw {{ stroke-dasharray: 1; animation: draw 1.4s ease-out both; }}
+@keyframes draw {{ from {{ stroke-dashoffset: 1; }} }}
+@media (prefers-reduced-motion: reduce) {{ .in, .grow, .pop, .draw {{ animation: none; }} }}
 </style>
 <rect x=".5" y=".5" width="{W - 1}" height="{height - 1}" rx="12" fill="{theme['card']}" stroke="{theme['border']}"/>
 <text x="24" y="38" font-size="16" font-weight="600">{escape(title)}</text>
@@ -340,10 +354,50 @@ def stat(x: float, y: float, value: str, label: str, delay: float = 0) -> str:
     )
 
 
+def portrait(theme: dict, x0: float, y0: float) -> str:
+    """Draw assets/portrait.txt as 0s and 1s that appear row by row when the image loads."""
+    rows = (OUT / "portrait.txt").read_text().splitlines()
+    cols = max(len(r) for r in rows)
+    cell_w, cell_h = 2.4, 4
+    dark = theme["card"] == THEMES["dark"]["card"]
+    # Light inks on the dark card and dark inks on the light card, so the face has contrast.
+    top, bottom = ("#b7d3f6", "#5fd3a8") if dark else ("#184f95", "#0f6e4c")
+    rng = random.Random(7)  # The same 0s and 1s on every run, so the file changes only with the data.
+    lines = []
+    for r, row in enumerate(rows):
+        buckets: dict[int, list[tuple[float, str]]] = defaultdict(list)
+        for c, char in enumerate(row):
+            if char == " ":
+                continue
+            light = int(char) / 9
+            # A floor of 0.12 keeps the dark parts of the subject visible, so its outline stays.
+            ink = 0.12 + 0.88 * (light if dark else 1 - light) ** 2
+            buckets[math.ceil(ink * 9)].append((x0 + c * cell_w, rng.choice("01")))
+        spans = "".join(
+            f'<tspan x="{" ".join(f"{x:.1f}" for x, _ in cells)}" class="o{level}">{"".join(g for _, g in cells)}</tspan>'
+            for level, cells in sorted(buckets.items())
+        )
+        lines.append(f'<text y="{y0 + (r + 1) * cell_h:.1f}" class="px" style="animation-delay:{0.018 * r:.2f}s">{spans}</text>')
+    height = len(rows) * cell_h
+    build = 0.018 * len(rows)
+    return f"""<defs><linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="{x0}" y1="{y0}" x2="{x0 + cols * cell_w}" y2="{y0 + height}">
+<stop offset="0" stop-color="{top}"/><stop offset="1" stop-color="{bottom}"/></linearGradient></defs>
+<style>
+.px {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 4.4px; font-weight: 700; fill: url(#ink); animation: in .35s ease-out both; }}
+{" ".join(f".o{i} {{ fill-opacity: {i / 9:.2f}; }}" for i in range(1, 10))}
+.scan {{ opacity: 0; animation: scan {build:.2f}s linear forwards; }}
+@keyframes scan {{ 0% {{ opacity: .8; transform: translateY(0); }} 95% {{ opacity: .8; }} 100% {{ opacity: 0; transform: translateY({height:.0f}px); }} }}
+@media (prefers-reduced-motion: reduce) {{ .px, .scan {{ animation: none; }} }}
+</style>
+{"".join(lines)}
+<rect class="scan" x="{x0}" y="{y0}" width="{cols * cell_w:.0f}" height="2" fill="{bottom}"/>"""
+
+
 def header_card(theme: dict, total: int, weekly: list[int]) -> str:
     blue, _, aqua = theme["series"]
-    # Sparkline of weekly contributions, right side.
-    sx, sy, sw, sh = W - 228, 84, 200, 32
+    height, x = 352, 392
+    # Sparkline of weekly contributions, under the total.
+    sx, sy, sw, sh = x, 268, W - 28 - x, 48
     peak = max(weekly) or 1
     step = sw / (len(weekly) - 1)
     points = [(sx + i * step, sy + sh - sh * v / peak) for i, v in enumerate(weekly)]
@@ -354,22 +408,30 @@ def header_card(theme: dict, total: int, weekly: list[int]) -> str:
     body = f"""<defs>
 <linearGradient id="accent" x1="0" x2="1"><stop offset="0" stop-color="{blue}"/><stop offset="1" stop-color="{aqua}"/></linearGradient>
 <linearGradient id="fade" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="{blue}" stop-opacity=".28"/><stop offset="1" stop-color="{blue}" stop-opacity="0"/></linearGradient>
-<clipPath id="top"><rect x="0" y="0" width="{W}" height="200" rx="12"/></clipPath>
+<clipPath id="top"><rect x="0" y="0" width="{W}" height="{height}" rx="12"/></clipPath>
 </defs>
+<style>
+.cursor {{ fill: {aqua}; animation: blink 1s step-end infinite; }}
+@keyframes blink {{ 50% {{ fill-opacity: 0; }} }}
+@media (prefers-reduced-motion: reduce) {{ .cursor {{ animation: none; }} }}
+</style>
 <rect x="0" y="0" width="{W}" height="4" fill="url(#accent)" clip-path="url(#top)"/>
-<g class="in">
-<text x="28" y="70" font-size="32" font-weight="700" letter-spacing="-.5">Aditya Mantri</text>
-<text x="28" y="98" font-size="15" class="m">AI Backend Engineer at Genies</text>
+{portrait(theme, 32, 20)}
+<g class="in" style="animation-delay:1s">
+<text x="{x}" y="118" font-size="34" font-weight="700" letter-spacing="-.5">Aditya Mantri</text>
+<text x="{x}" y="148" font-size="15" class="m">AI Backend Engineer at Genies<tspan class="cursor"> ▍</tspan></text>
 </g>
-<g class="in" style="animation-delay:.2s">
-<text x="{W - 28}" y="52" font-size="28" font-weight="700" text-anchor="end" class="n">{fmt(total)}</text>
-<text x="{W - 28}" y="72" font-size="12" class="m" text-anchor="end">contributions in the {PERIOD_LABEL}</text>
-<polygon points="{area}" fill="url(#fade)"/>
-<polyline points="{line}" fill="none" stroke="{blue}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="4" fill="{blue}" stroke="{theme['card']}" stroke-width="2"/>
-</g>"""
+<g class="in" style="animation-delay:1.3s">
+<text x="{x}" y="232" font-size="30" font-weight="700" class="n">{fmt(total)}</text>
+<text x="{x}" y="254" font-size="12" class="m">contributions in the {PERIOD_LABEL}</text>
+<text x="{sx}" y="{sy + sh + 16}" font-size="10" class="m">{PERIOD_START:%b %-d}</text>
+<text x="{sx + sw}" y="{sy + sh + 16}" font-size="10" class="m" text-anchor="end">today</text>
+</g>
+<polygon points="{area}" fill="url(#fade)" class="in" style="animation-delay:2.4s"/>
+<polyline points="{line}" pathLength="1" fill="none" stroke="{blue}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="draw" style="animation-delay:1.4s"/>
+<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="4" fill="{blue}" stroke="{theme['card']}" stroke-width="2" class="pop" style="animation-delay:2.6s"/>"""
     # The base card draws a title row; the header uses its own layout, so drop the empty title.
-    return card(theme, 136, "", "", body)
+    return card(theme, height, "", "", body)
 
 
 def delta(current: int, previous: int) -> str:
@@ -446,7 +508,8 @@ def heatmap_card(theme: dict, daily: Counter, current: int, longest: int) -> str
             count = daily.get(day, 0)
             level = 0 if not count else 1 + sum(count > cut for cut in cuts)
             cells.append(
-                f'<rect x="{x0 + col * step}" y="{y0 + row * step}" width="{cell}" height="{cell}" rx="4" fill="{theme["heat"][level]}"/>'
+                f'<rect x="{x0 + col * step}" y="{y0 + row * step}" width="{cell}" height="{cell}" rx="4" fill="{theme["heat"][level]}"'
+                f' class="pop" style="animation-delay:{0.02 * (col + row):.2f}s"/>'
             )
             if day.day == 1:
                 months.append(f'<text x="{x0 + col * step}" y="{y0 - 10}" font-size="11" class="m">{day:%b}</text>')
@@ -520,7 +583,7 @@ def repos_card(
             f'<clipPath id="bar{i}"><rect x="{bar_x}" y="{y + 10}" width="{width:.1f}" height="12" rx="4"/></clipPath>'
             f'<text x="24" y="{y + 19}" font-size="13"><tspan class="m">{escape(owner)}/</tspan>'
             f'<tspan font-weight="600">{escape(name)}</tspan></text>{lang}'
-            f'<g clip-path="url(#bar{i})">{"".join(segments)}</g>'
+            f'<g clip-path="url(#bar{i})"><g class="grow" style="animation-delay:{0.2 + 0.06 * i:.2f}s">{"".join(segments)}</g></g>'
             f'<text x="{W - 112}" y="{y + 21}" font-size="13" font-weight="600" text-anchor="end" class="n">{fmt(total)}</text>'
             f'<text x="{W - 66}" y="{y + 21}" font-size="12" text-anchor="end" class="m n">{100 * total / grand:.0f}%</text>'
             f'<text x="{W - 24}" y="{y + 21}" font-size="12" text-anchor="end" class="n">{fmt(recent[repo])}</text></g>'
@@ -543,7 +606,10 @@ def rhythm_card(theme: dict, punch: Counter, weekend_active: int, weekend_days: 
             cx, cy = x0 + hour * col, y0 + wd * row
             if count:
                 radius = 2 + 9 * math.sqrt(count / peak)
-                dots.append(f'<circle cx="{cx}" cy="{cy}" r="{radius:.1f}" fill="{blue}" fill-opacity=".9"/>')
+                dots.append(
+                    f'<circle cx="{cx}" cy="{cy}" r="{radius:.1f}" fill="{blue}" fill-opacity=".9" class="pop"'
+                    f' style="animation-delay:{0.02 * hour + 0.03 * wd:.2f}s"/>'
+                )
             else:
                 dots.append(f'<circle cx="{cx}" cy="{cy}" r="1.5" fill="{theme["faint"]}"/>')
     hours = "".join(
