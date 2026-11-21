@@ -2,7 +2,7 @@ name: Profile stats
 
 on:
   schedule:
-    - cron: "17 13 * * *" # Every day, about 5–6 AM Pacific.
+    - cron: "17 */4 * * *" # Every 4 hours.
   workflow_dispatch:
   push:
     branches: [main]
